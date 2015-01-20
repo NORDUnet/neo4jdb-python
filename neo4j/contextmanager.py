@@ -40,21 +40,22 @@ class Neo4jDBConnectionManager():
 
     def __init__(self, dsn):
         self.dsn = dsn
-        self.connection = Connection(dsn)
 
     @contextmanager
     def _read(self):
-        cursor = self.connection.cursor()
+        conn = Connection(self.dsn)
+        cursor = conn.cursor()
         try:
             yield cursor
         finally:
             cursor.close()
-            self.connection.rollback()
+            conn.rollback()
     read = property(_read)
 
     @contextmanager
     def _write(self):
-        cursor = self.connection.cursor()
+        conn = Connection(self.dsn)
+        cursor = conn.cursor()
         try:
             yield cursor
         except Connection.Error as e:
@@ -63,7 +64,7 @@ class Neo4jDBConnectionManager():
             raise e
         else:
             cursor.close()
-            self.connection.commit()
+            conn.commit()
         finally:
             pass
     write = property(_write)
@@ -83,3 +84,4 @@ class Neo4jDBConnectionManager():
             cursor.close()
             connection.close()
     transaction = property(_transaction)
+

@@ -140,16 +140,13 @@ class Connection(object):
 
         return response['results'][-1]
 
-    def _http_req(self, method, path, payload=None, retries=2):
+    def _http_req(self, method, path, payload=None):
         serialized_payload = json.dumps(payload) if payload is not None else None
 
         try:
             self._http.request(method, path, serialized_payload, self._COMMON_HEADERS)
             http_response = self._http.getresponse()
-        except (http.BadStatusLine, http.CannotSendRequest):
-            self._http = http.HTTPConnection(self._host)
-            if retries > 0:
-                return self._http_req(method, path, payload, retries-1)
+        except (http.BadStatusLine, http.CannotSendRequest) as e:
             self._handle_error(self, None, Connection.OperationalError, "Connection has expired.")
 
         if not http_response.status in [200, 201]:
