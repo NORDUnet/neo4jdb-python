@@ -42,12 +42,10 @@ class ConnectionManager():
     def __init__(self, dsn):
         self.dsn = dsn
         self.free_connections = []
-        self.busy_connections = []
 
 
     def _new_connection(self):
         conn = Connection(self.dsn)
-        self.busy_connections.append(conn)
         return conn
 
 
@@ -57,12 +55,10 @@ class ConnectionManager():
         except IndexError:
             conn = self._new_connection()
 
-        self.busy_connections.append(conn)
         return conn
 
 
     def _release_connection(self, conn):
-        self.busy_connections.remove(conn)
         self.free_connections.append(conn)
 
 
