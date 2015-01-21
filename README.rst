@@ -2,13 +2,11 @@
 Neo4jDB
 =======
 
-Implements the Python DB API 2.0 for Neo4j, compatible with python 2.6, 2.7,
-3.2 and 3.3 and Neo4j >= 2.0.0
+This is a fork of the neo4jdb-python driver. It does away with the DB API,
+and the strong binding between cursor and connection. It is low-level, barebones
+and opinionated. However it has connection pooling and no obvious concurrency
+issues.
 
-http://legacy.python.org/dev/peps/pep-0249/
-
-.. image:: https://travis-ci.org/jakewins/neo4jdb-python.svg?branch=master
-   :target: https://travis-ci.org/jakewins/neo4jdb-python
 
 
 Installing
@@ -25,10 +23,9 @@ Minimum viable snippet
 
     import neo4j
 
-    connection = neo4j.connect("http://localhost:7474")
+    cm = neo4j.connect("http://localhost:7474")
 
-    cursor = connection.cursor()
-    for name, age in cursor.execute("MATCH (n:User) RETURN n.name, n.age"):
+    for name, age in cm.request("MATCH (n:User) RETURN n.name, n.age"):
         print name, age
 
 Usage
@@ -40,23 +37,16 @@ for the DB API for detailed usage.
 ::
 
     # Write statements
-    cursor.execute("CREATE (n:User {name:'Stevie Brook'}")
-    connection.commit() # Or connection.rollback()
-
-    # With positional parameters
-    cursor.execute("CREATE (n:User {name:{0}})", "Bob")
-    # or
-    l = ['Bob']
-    cursor.execute("CREATE (n:User {name:{0}})", *l)
+    cm.request"CREATE (n:User {name:'Stevie Brook'}")
 
     # With named parameters
-    cursor.execute("CREATE (n:User {name:{name}})", name="Bob")
+    cm.execute("CREATE (n:User {name:{name}})", name="Bob")
     # or
     d = {'name': 'Bob'}
-    cursor.execute("CREATE (n:User {name:{name}})", **d)
+    cm.execute("CREATE (n:User {name:{name}})", **d)
     # or
     d = {'node': {'name': 'Bob'}}
-    cursor.execute("CREATE (n:User {node})", **d)
+    cm.execute("CREATE (n:User {node})", **d)
 
 
 If you ask Cypher to return Nodes or Relationships, these are represented as Node and Relationship types, which
