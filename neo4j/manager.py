@@ -62,13 +62,13 @@ class ConnectionManager():
         self.free_connections.append(conn)
 
 
-    def request(self, statement, *kwargs):
+    def request(self, statement, **kwargs):
         # A single request, that runs in its own transaction
         # Can be read or write. Does not matter.
         # If you want multiple statements in a single transaction, using the with transaction as t...
         assert type(statement) in (bytes, str), 'Statement must be a string'
         conn = self._get_connection()
-        result = conn._commit_request(statement)
+        result = conn._commit_request(statement, **kwargs)
         self._release_connection(conn)
         return result
 

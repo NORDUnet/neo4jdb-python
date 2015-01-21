@@ -2,7 +2,7 @@
 import json
 
 from . import error
-from . import strings as ustr
+from .strings import ustr
 
 
 try:
@@ -84,7 +84,7 @@ class Connection(object):
             self._http.request(method, path, serialized_payload, self._COMMON_HEADERS)
             http_response = self._http.getresponse()
         except (http.BadStatusLine, http.CannotSendRequest) as e:
-            raise Connection.OperationalError('Connection error: ' + str(e))
+            raise error.OperationalError('Connection error: ' + str(type(e)) + ': ' + str(e))
 
         if not http_response.status in [200, 201]:
             raise error.OperationalError('Server returned unexpected response: ' + ustr(http_response.status) + ' ' + ustr(http_response.read()))
@@ -96,7 +96,7 @@ class Connection(object):
         # do we ever got more than one here? - I hope not
         for err in response['errors']:
             error_class = neo_code_to_error_class(err['code'])
-            error_value = ustr(error['code']) + ": " + ustr(err['message'])
+            error_value = ustr(err['code']) + ": " + ustr(err['message'])
             raise error_class(error_value)
 
 
