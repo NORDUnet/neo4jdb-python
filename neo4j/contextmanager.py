@@ -1,87 +1,92 @@
+"""
+Connection manager. Use this in your client.
+
+It does (or should) do connecting pooling.
+
+Use .request for single requests.
+
+Use with manager.transaction as t for transactions.
+
+Fork of jakewins/neo4jdb-python.
+"""
+
 from contextlib import contextmanager
+
 from neo4j.connection import Connection
+from neo4j.transaction import Transaction
 
 
-class Neo4jDBConnectionManager():
+
+class ConnectionManager():
 
     """
-    Every new connection is a transaction. To minimize new connection overhead for many reads we try to reuse a single
-    connection. If this seem like a bad idea some kind of connection pool might work better.
-
-    Neo4jDBConnectionManager.read()
-    When using with Neo4jDBConnectionManager.read(): we will always rollback the transaction. All exceptions will be
-    thrown.
-
-    Neo4jDBConnectionManager.write()
-    When using with Neo4jDBConnectionManager.write() we will always commit the transaction except when we see an
-    exception. If we get an exception we will rollback the transaction and throw the exception.
-
     Neo4jDBConnectionManager.transaction()
     When we don't want to share a connection (transaction context) we can set up a new connection which will work
     just as the write context manager above but with it's own connection.
 
-    >>> manager = Neo4jDBConnectionManager("http://localhost:7474")
-    >>> with manager.write() as w:
-    ...     w.execute("CREATE (TheMatrix:Movie {title:'The Matrix', tagline:'Welcome to the Real World'})")
-    ...
-    <neo4j.cursor.Cursor object at 0xb6fafa4c>
+    >>> n4cm = Neo4jDBConnectionManager("http://localhost:7474")
+    >>> n4cm.request("CREATE (TheMatrix:Movie {title:'The Matrix', tagline:'Welcome to the Real World'})")
+    [ whatever ]
     >>>
-    >>> with manager.read() as r:
-    ...     for n in r.execute("MATCH (n:Movie) RETURN n LIMIT 1"):
-    ...         print n
+    >>> for n in n4cm.request("MATCH (n:Movie) RETURN n LIMIT 1"):
+    ...     print n
     "({'tagline': 'Welcome to the Real World', 'title': 'The Matrix'},)"
 
     Commits in batches can be achieved by:
-    >>> with manager.write() as w:
+    >>> with manager.transaction() as tr:
     ...     w.execute("CREATE (TheMatrix:Movie {title:'The Matrix Reloaded', tagline:'Free your mind.'})")
-    ...     w.connection.commit()  # The Matric Reloaded will be committed
     ...     w.execute("CREATE (TheMatrix:Movie {title:'Matrix Revolutions', tagline:'Everything that has a beginning has an end.'})")
+    ...     w.connection.commit()
     """
 
     def __init__(self, dsn):
         self.dsn = dsn
+        self.free_connections = []
+        self.busy_connections = []
 
-    @contextmanager
-    def _read(self):
-        conn = Connection(self.dsn)
-        cursor = conn.cursor()
-        try:
-            yield cursor
-        finally:
-            cursor.close()
-            conn.rollback()
-    read = property(_read)
 
-    @contextmanager
-    def _write(self):
+    def _new_connection(self):
         conn = Connection(self.dsn)
-        cursor = conn.cursor()
+        self.busy_connections.append(conn)
+        return conn
+
+
+    def _get_connection(self):
         try:
-            yield cursor
-        except Connection.Error as e:
-            cursor.close()
-            self.connection.rollback()
-            raise e
-        else:
-            cursor.close()
-            conn.commit()
-        finally:
-            pass
-    write = property(_write)
+            conn = self.free_connections.pop()
+            print 'old conn', id(conn)
+        except IndexError:
+            conn = self._new_connection()
+            print 'new conn', id(conn)
+
+        self.busy_connections.append(conn)
+        return conn
+
+
+    def _release_connection(self, conn):
+        self.busy_connections.remove(conn)
+        self.free_connections.append(conn)
+
+
+    def request(self, statement, *kwargs):
+        # A single request, that runs in its own transaction
+        # Can be read or write. Does not matter.
+        # If you want multiple statements in a single transaction, using the with transaction as t...
+        assert type(statement) in (bytes, str), 'Statement must be a string'
+        conn = self._get_connection()
+        result = conn._commit_request(statement)
+        self._release_connection(conn)
+        return result
+
 
     @contextmanager
     def _transaction(self):
-        connection = Connection(self.dsn)
-        cursor = connection.cursor()
+        tr = Transaction(self._get_connection())
         try:
-            yield cursor
-        except Connection.Error as e:
-            connection.rollback()
-            raise e
-        else:
-            connection.commit()
+            yield tr
         finally:
-            cursor.close()
-            connection.close()
+            tr.done()
+            self._release_connection(tr._conn)
+
     transaction = property(_transaction)
 

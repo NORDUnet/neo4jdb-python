@@ -1,27 +1,28 @@
 
 import json
 
-from neo4j.cursor import Cursor
-from neo4j.strings import ustr
+from . import error
+from . import strings as ustr
+
 
 try:
     from http import client as http
     from urllib.parse import urlparse
-    StandardError = Exception
-except ImportError:
+except ImportError: # python 2.x compat
     import httplib as http
     from urlparse import urlparse
-    from exceptions import StandardError
 
 TX_ENDPOINT = "/db/data/transaction"
+TX_COMMIT_ENDPOINT = "/db/data/transaction/commit"
 
 
 def neo_code_to_error_class(code):
     if code.startswith('Neo.ClientError.Schema'):
-        return Connection.IntegrityError
+        return error.IntegrityError
     elif code.startswith('Neo.ClientError'):
-        return Connection.ProgrammingError
-    return Connection.InternalError
+        return error.ProgrammingError
+    else:
+        return error.InternalError
 
 
 def default_error_handler(connection, cursor, errorclass, errorvalue):
@@ -31,142 +32,81 @@ def default_error_handler(connection, cursor, errorclass, errorvalue):
 
 class Connection(object):
 
-    class Error(StandardError):
-        rollback = True
-
-    class Warning(StandardError):
-        rollback = False
-
-    class InterfaceError(Error):
-        pass
-
-    class DatabaseError(Error):
-        pass
-
-    class InternalError(DatabaseError):
-        pass
-
-    class OperationalError(DatabaseError):
-        pass
-
-    class ProgrammingError(DatabaseError):
-        rollback = False
-
-    class IntegrityError(DatabaseError):
-        rollback = False
-
-    class DataError(DatabaseError):
-        pass
-
-    class NotSupportedError(DatabaseError):
-        pass
-
     _COMMON_HEADERS = {"Content-Type": "application/json", "Accept": "application/json", "Connection": "keep-alive"}
 
-    def __init__(self, db_uri):
-        self.errorhandler = default_error_handler
-        self._host = urlparse(db_uri).netloc
+    def __init__(self, db_url):
+        self._host = urlparse(db_url).netloc
         self._http = http.HTTPConnection(self._host)
-        self._tx = TX_ENDPOINT
-        self._messages = []
-        self._cursors = set()
-        self._cursor_ids = 0
 
-    def commit(self):
-        self._messages = []
-        pending = self._gather_pending()
-        
-        if self._tx != TX_ENDPOINT or len(pending) > 0:
-            payload = None
-            if len(pending) > 0:
-                payload = {'statements': [{'statement': s, 'parameters': p} for (s, p) in pending]}
-            response = self._deserialize(self._http_req("POST", self._tx + "/commit", payload))
-            self._tx = TX_ENDPOINT
-            self._handle_errors(response, self, None)
 
-    def rollback(self):
-        self._messages = []
-        self._gather_pending()  # Just used to clear all pending requests
-        if self._tx != TX_ENDPOINT:
-            response = self._deserialize(self._http_req("DELETE", self._tx))
-            self._tx = TX_ENDPOINT
-            self._handle_errors(response, self, None)
-
-    def cursor(self):
-        self._messages = []
-        cursor = Cursor(self._next_cursor_id(), self, self._execute)
-        self._cursors.add(cursor)
-        return cursor
-
+    # afaict we don't use this
     def close(self):
-        self._messages = []
-        if hasattr(self, '_http') and self._http is not None:
+        if self._http is not None:
             self._http.close()
             self._http = None
+
 
     def __del__(self):
         self.close()
 
-    @property
-    def messages(self):
-        return self._messages
 
-    def _next_cursor_id(self):
-        self._cursor_ids += 1
-        return self._cursor_ids
+    def _commit_request(self, statement, **kwargs):
 
-    def _gather_pending(self):
-        pending = []
-        for cursor in self._cursors:
-            if len(cursor._pending) > 0:
-                pending.extend(cursor._pending)
-                cursor._pending = []
-        return pending
+        payload = [ {'statement': statement, 'parameters': kwargs} ]
 
-    def _execute(self, cursor, statements):
+        http_response = self._request("POST", TX_COMMIT_ENDPOINT, {'statements': payload})
+
+        # copied from below
+        response = self._deserialize(http_response)
+        self._handle_errors(response)
+        return self._extract_rows(response)
+
+
+    def _tx_request(self, tx, statement, **kwargs):
         """"
         Executes a list of statements, returning an iterator of results sets. Each 
         statement should be a tuple of (statement, params).
         """
-        payload = [{'statement': s, 'parameters': p, 'resultDataContents':['rest']} for (s, p) in statements]
-        http_response = self._http_req("POST", self._tx, {'statements': payload})
+        payload = [ {'statement': statement, 'parameters':  kwargs} ]
+        http_response = self._request('POST', tx, {'statements': payload})
 
-        if self._tx == TX_ENDPOINT:
-            self._tx = http_response.getheader('Location')
+        tx_url = http_response.getheader('Location')
 
         response = self._deserialize(http_response)
+        self._handle_errors(response)
+        return self._extract_rows(response), tx_url
 
-        self._handle_errors(response, cursor, cursor)
 
-        return response['results'][-1]
-
-    def _http_req(self, method, path, payload=None):
+    def _request(self, method, path, payload=None):
         serialized_payload = json.dumps(payload) if payload is not None else None
 
         try:
             self._http.request(method, path, serialized_payload, self._COMMON_HEADERS)
             http_response = self._http.getresponse()
         except (http.BadStatusLine, http.CannotSendRequest) as e:
-            self._handle_error(self, None, Connection.OperationalError, "Connection has expired.")
+            raise Connection.OperationalError('Connection error: ' + str(e))
 
         if not http_response.status in [200, 201]:
-            message = "Server returned unexpected response: " + ustr(http_response.status) + ustr(http_response.read())
-            self._handle_error(self, None, Connection.OperationalError, message)
+            raise error.OperationalError('Server returned unexpected response: ' + ustr(http_response.status) + ' ' + ustr(http_response.read()))
 
         return http_response
 
-    def _handle_errors(self, response, owner, cursor):
-        for error in response['errors']:
-            error_class = neo_code_to_error_class(error['code'])
-            error_value = ustr(error['code']) + ": " + ustr(error['message'])
-            self._handle_error(owner, cursor, error_class, error_value)
 
-    def _handle_error(self, owner, cursor, error_class, error_value):
-        if error_class.rollback:
-            self._tx = TX_ENDPOINT
-            self._gather_pending()  # Just used to clear all pending requests
-        owner._messages.append((error_class, error_value))
-        owner.errorhandler(self, cursor, error_class, error_value)
+    def _handle_errors(self, response):
+        # do we ever got more than one here? - I hope not
+        for err in response['errors']:
+            error_class = neo_code_to_error_class(err['code'])
+            error_value = ustr(error['code']) + ": " + ustr(err['message'])
+            raise error_class(error_value)
+
+
+    def _extract_rows(self, response):
+        results = response['results']
+        if not results:
+            return []
+        else:
+            return [ d['row'] for d in results[0]['data'] ]
+
 
     def _deserialize(self, response):
         # TODO: This is exceptionally annoying, python 3 has improved byte array handling, but that means the JSON
