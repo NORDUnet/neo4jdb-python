@@ -1,12 +1,12 @@
 
-from neo4j import contextmanager as cm
+from neo4j import manager
 
 apilevel = '2.0'
 threadsafety = 1
 
 
 def connect(dsn):
-    return cm.ConnectionManager(dsn)
+    return manager.ConnectionManager(dsn)
 
 
 from error import *
