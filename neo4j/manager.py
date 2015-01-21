@@ -54,10 +54,8 @@ class ConnectionManager():
     def _get_connection(self):
         try:
             conn = self.free_connections.pop()
-            print 'old conn', id(conn)
         except IndexError:
             conn = self._new_connection()
-            print 'new conn', id(conn)
 
         self.busy_connections.append(conn)
         return conn
