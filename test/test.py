@@ -13,7 +13,7 @@ class TestConnection(unittest.TestCase):
     def test_request(self):
 
         # because sometime the previous tests fucks up
-        self.n4cm.request("MATCH (n:TestCommit) DELETE n")
+        # self.n4cm.request("MATCH (n:TestCommit) DELETE n")
 
         # insert
         self.n4cm.request("CREATE (n:TestCommit {name:1337})")
@@ -33,7 +33,7 @@ class TestConnection(unittest.TestCase):
     def test_transaction_commit(self):
 
         # because sometime the previous tests fucks up
-        self.n4cm.request("MATCH (n:TestCommit) DELETE n")
+        # self.n4cm.request("MATCH (n:TestCommit) DELETE n")
 
         with self.n4cm.transaction as t:
             t.execute("CREATE (n:TestCommit {name:1338})")
@@ -60,6 +60,27 @@ class TestConnection(unittest.TestCase):
         r = self.n4cm.request("MATCH (n:TestCommit) RETURN n.name")
         self.assertEqual(len(r), 0)
 
+
+    def test_double_transaction(self):
+
+        # because sometime the previous tests fucks up
+        # self.n4cm.request("MATCH (n:TestCommit) DELETE n")
+
+        with self.n4cm.transaction as t1:
+            t1.execute("CREATE (n:TestCommit {name:1338})")
+
+            with self.n4cm.transaction as t2:
+                t2.execute("CREATE (n:TestCommit {name:1339})")
+                t2.commit()
+            t1.commit()
+
+        # query / insert check
+        r = self.n4cm.request("MATCH (n:TestCommit) RETURN n.name")
+        self.assertEqual(len(r), 2)
+        self.assertIn([1338], r)
+        self.assertIn([1339], r)
+
+        self.n4cm.request("MATCH (n:TestCommit) DELETE n")
 
 
 
