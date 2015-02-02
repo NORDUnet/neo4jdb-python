@@ -72,7 +72,7 @@ class Neo4jDBConnectionManager():
     @contextmanager
     def _transaction(self):
         connection = Connection(self.dsn)
-        cursor = conn.cursor()
+        cursor = connection.cursor()
         try:
             yield cursor
         except Connection.Error as e:
